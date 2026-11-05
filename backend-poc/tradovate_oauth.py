@@ -4,7 +4,7 @@
 Env vars: TV_OAUTH_CLIENT_ID, TV_OAUTH_CLIENT_SECRET, TV_OAUTH_REDIRECT_URI
 
   python3 backend-poc/tradovate_oauth.py authorize          # prints the approval link
-  python3 backend-poc/tradovate_oauth.py exchange '<URL>'   # paste the full redirected URL (or just the code)
+  python3 backend-poc/tradovate_oauth.py exchange           # then paste the full redirected URL when asked
   python3 backend-poc/tradovate_oauth.py accounts           # GET /v1/account/list with the saved token
   python3 backend-poc/tradovate_oauth.py me                 # GET /v1/auth/me
   python3 backend-poc/tradovate_oauth.py balances           # every account: name, type, cash, net liq, P&L
@@ -89,7 +89,7 @@ def cmd_authorize():
     print("Open this in your browser, log in with a DEMO login, and approve:\n")
     print(f"{AUTHORIZE_URL}&{q}\n")
     print("The browser will then land on your redirect URI (the page may fail to load; that's fine).")
-    print("Copy the FULL address from the address bar and run:  exchange '<that URL>'")
+    print("Copy the FULL address from the address bar, then run:  exchange   (it asks for the URL)")
 
 
 def token_request(grant):
@@ -216,6 +216,9 @@ def main():
         cmd_authorize()
     elif c == "exchange" and len(sys.argv) == 3:
         cmd_exchange(sys.argv[2])
+    elif c == "exchange" and len(sys.argv) == 2:
+        # No argument: prompt for the URL, so the shell never splits it on '&'.
+        cmd_exchange(input("Paste the full redirected URL and press Enter: ").strip().strip("'\""))
     elif c == "refresh":
         cmd_refresh()
     elif c == "accounts":
