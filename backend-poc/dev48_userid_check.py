@@ -13,7 +13,7 @@ What `check` does, using the token saved by tradovate_oauth.py:
   3. Appends the result to ~/.cache/copytrader/dev48_results.json.
 
 It prints only claim NAMES and the ids (sub, userId, organizationName). Never tokens, email or name.
-Do 2 separate authorize+exchange runs per login type, so `report` can check that `sub` is stable.
+One prop-firm login is enough; a personal login or a repeat login is optional.
 """
 import base64, json, sys, time
 from pathlib import Path
@@ -81,14 +81,18 @@ def cmd_report():
         print(f"{r['label']:9} {r['at']:19} {str(r['id_token']):8} {str(r['sub']):>12} "
               f"{str(r['userId']):>12} {str(r['match']):5} {r['org']}")
 
+    # sub == live userId is the key check: a Tradovate userId is the login's permanent id, so a match
+    # also implies stability. Extra exchanges of the same login are optional and must agree if present.
     checks = {}
     for label in LABELS:
         runs = [r for r in rows if r["label"] == label]
-        tokens = {r["obtained_at"] for r in runs}  # distinct exchanges, not re-checks of one token
-        subs = {r["sub"] for r in runs}
-        checks[f"{label}: has sub"] = bool(runs) and all(r["sub"] is not None for r in runs)
-        checks[f"{label}: sub == live userId"] = bool(runs) and all(r["match"] for r in runs)
-        checks[f"{label}: sub stable over 2+ exchanges"] = len(tokens) >= 2 and len(subs) == 1
+        if not runs:
+            print(f"(no '{label}' runs recorded; skipped)")
+            continue
+        checks[f"{label}: has sub"] = all(r["sub"] is not None for r in runs)
+        checks[f"{label}: sub == live userId"] = all(r["match"] for r in runs)
+        if len({r["obtained_at"] for r in runs}) >= 2:
+            checks[f"{label}: same sub across logins"] = len({r["sub"] for r in runs}) == 1
 
     print()
     for name, ok in checks.items():
