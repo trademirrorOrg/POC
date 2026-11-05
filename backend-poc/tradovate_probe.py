@@ -28,7 +28,7 @@ ENDPOINTS = [
     ("Account Information", "margin snapshots", "GET", "/marginSnapshot/list"),
     ("Account Risk Settings", "risk status", "GET", "/accountRiskStatus/list"),
     ("Account Risk Settings", "auto-liquidation settings", "GET", "/userAccountAutoLiq/list"),
-    ("Account Risk Settings", "risk parameters", "GET", "/userAccountRiskParameter/list"),
+    ("Account Risk Settings", "position limits", "GET", "/userAccountPositionLimit/list"),
     ("Positions", "positions", "GET", "/position/list"),
     ("Positions", "fill pairs (closed trades)", "GET", "/fillPair/list"),
     ("Orders (read)", "orders", "GET", "/order/list"),
@@ -106,6 +106,9 @@ def cmd_report():
 
     perms = {}
     for e in r["endpoints"]:
+        if e["status"] is None:  # skipped (e.g. no account to query), not a failure
+            print(f"  [SKIP] {e['permission']:22} {e['label']:32} {e.get('error', '')}")
+            continue
         ok = e["status"] == 200
         perms.setdefault(e["permission"], []).append(ok)
         detail = ((f"{e['count']} item(s)" if e.get("count") is not None else "1 object") + (f", {e['oldest']} .. {e['newest']}" if e.get("oldest") else "")
