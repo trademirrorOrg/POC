@@ -123,8 +123,10 @@ def post_follow(url, data, headers):
             if e.code in (307, 308) and loc and host is None:
                 nxt = urllib.parse.urljoin(url, loc)
                 nhost = urllib.parse.urlparse(nxt).hostname or ""
-                # Only resend the token to a Tradovate DEMO host over https.
-                if not (nxt.startswith("https://") and nhost.endswith(".tradovateapi.com") and "live" not in nhost):
+                # Only resend the token to a DEMO Tradovate/NinjaTrader host over https
+                # (prop firms get their own, e.g. demo-api.lucid.ninjatrader.com).
+                if not (nxt.startswith("https://") and nhost.endswith((".tradovateapi.com", ".ninjatrader.com"))
+                        and nhost.startswith("demo") and "live" not in nhost):
                     return e.code, f"refused redirect to {nhost or loc}", nhost
                 url, host = nxt, nhost
                 continue
