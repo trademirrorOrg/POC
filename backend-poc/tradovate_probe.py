@@ -11,7 +11,7 @@ Places NO orders and changes nothing. The only live-host call is GET /auth/me (D
 Saved and printed: HTTP status, item count, field names/types/null-ness, oldest/newest timestamps and
 the values of short enum-like fields (statuses, types, sides). Never ids, amounts, tokens, emails or names. Results file: ~/.cache/copytrader/probe_results.json
 """
-import json, sys, time
+import json, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -34,6 +34,7 @@ ENDPOINTS = [
     ("Orders (read)", "orders", "GET", "/order/list"),
     ("Orders (read)", "fills", "GET", "/fill/list"),
     ("Orders (read)", "execution reports", "GET", "/executionReport/list"),
+    ("Orders (read)", "order versions (qty/price/type)", "GET", "/orderVersion/list"),
     ("Orders (read)", "order strategies", "GET", "/orderStrategy/list"),
     ("Orders (read)", "commands", "GET", "/command/list"),
     ("Contract Library", "product search 'ES'", "GET", "/product/suggest?t=ES&l=5"),
@@ -106,6 +107,35 @@ def summarize(status, body):
     return out
 
 
+def post_follow(url, data, headers):
+    """POST JSON, following one 307/308 redirect with the same body (urllib won't for POST).
+    Returns (status, body, redirect_host or None)."""
+    body = json.dumps(data).encode()
+    hdrs = {**headers, "Content-Type": "application/json", "Accept": "application/json"}
+    host = None
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, data=body, headers=hdrs, method="POST"),
+                                        timeout=20) as r:
+                raw, status = r.read(), r.status
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location")
+            if e.code in (307, 308) and loc and host is None:
+                nxt = urllib.parse.urljoin(url, loc)
+                nhost = urllib.parse.urlparse(nxt).hostname or ""
+                # Only resend the token to a Tradovate DEMO host over https.
+                if not (nxt.startswith("https://") and nhost.endswith(".tradovateapi.com") and "live" not in nhost):
+                    return e.code, f"refused redirect to {nhost or loc}", nhost
+                url, host = nxt, nhost
+                continue
+            raw, status = e.read(), e.code
+        try:
+            return status, json.loads(raw or b"null"), host
+        except json.JSONDecodeError:
+            return status, raw.decode(errors="replace")[:160], host
+    return status, None, host
+
+
 def cmd_pull():
     tok = load_token()
     age = time.time() - tok.get("obtained_at", 0)
@@ -120,9 +150,12 @@ def cmd_pull():
             if not account_ids:
                 res = {"status": None, "error": "skipped: no account to query"}
             else:  # one snapshot per account (up to MAX_ACCOUNTS), shapes merged
-                snaps = [http(API + path, data={"accountId": a}, headers=h) for a in account_ids[:MAX_ACCOUNTS]]
-                bad = [st for st, _ in snaps if st != 200]
-                res = summarize(bad[0] if bad else 200, snaps[0][1] if bad else [b for _, b in snaps])
+                snaps = [post_follow(API + path, {"accountId": a}, h) for a in account_ids[:MAX_ACCOUNTS]]
+                bad = [st for st, _, _ in snaps if st != 200]
+                res = summarize(bad[0] if bad else 200, snaps[0][1] if bad else [b for _, b, _ in snaps])
+                redirect = next((r for _, _, r in snaps if r), None)
+                if redirect:
+                    res["redirected_to"] = redirect
         else:
             status, body = http(API + path, headers=h)
             res = summarize(status, body)
@@ -131,7 +164,8 @@ def cmd_pull():
         res.update(permission=perm, label=label, path=path)
         results["endpoints"].append(res)
         extra = (f"{res['count']} item(s)" if res.get("count") is not None else "1 object") if res["status"] == 200 else res.get("error", "")
-        print(f"[{res['status']}] {perm:22} {label:32} {extra}")
+        print(f"[{res['status']}] {perm:22} {label:32} {extra}"
+              + (f"  (redirected to {res['redirected_to']})" if res.get("redirected_to") else ""))
 
     # Identity (DEV-48): id_token sub vs live /auth/me userId. Only ids are kept.
     claims = decode_payload(tok["id_token"]) if tok.get("id_token") else {}
