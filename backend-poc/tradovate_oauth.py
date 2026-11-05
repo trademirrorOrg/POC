@@ -9,6 +9,7 @@ Env vars: TV_OAUTH_CLIENT_ID, TV_OAUTH_CLIENT_SECRET, TV_OAUTH_REDIRECT_URI
   python3 backend-poc/tradovate_oauth.py me                 # GET /v1/auth/me
   python3 backend-poc/tradovate_oauth.py balances           # every account: name, type, cash, net liq, P&L
   python3 backend-poc/tradovate_oauth.py refresh            # refresh_token grant
+  python3 backend-poc/tradovate_oauth.py history            # count + date range of fills/orders the token can read
 
 State and tokens are kept in ~/.cache/copytrader/ (mode 600), never printed.
 DEMO ONLY: the hosts below are hard-coded on purpose.
@@ -190,6 +191,23 @@ def cmd_balances():
               f"initialMargin={snap.get('initialMargin')}" + ("" if st == 200 else f"  (snapshot HTTP {st})"))
 
 
+def cmd_history():
+    """Read-only: how much trade history can this token see? Prints counts and date ranges only."""
+    tok = load_token()
+    h = {"Authorization": f"Bearer {tok['access_token']}"}
+    for path, ts_field in [("/fill/list", "timestamp"), ("/fillPair/list", None),
+                           ("/order/list", "timestamp"), ("/executionReport/list", "timestamp")]:
+        st, rows = http(API + path, headers=h)
+        if st != 200 or not isinstance(rows, list):
+            print(f"{path}: HTTP {st} {str(rows)[:200]}")
+            continue
+        times = sorted(r[ts_field] for r in rows if ts_field and r.get(ts_field))
+        span = f"  oldest={times[0]}  newest={times[-1]}" if times else ""
+        print(f"{path}: HTTP 200, {len(rows)} item(s){span}")
+        if rows:
+            print(f"    fields: {sorted(rows[0])}")
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
@@ -204,6 +222,8 @@ def main():
         cmd_get("/account/list")
     elif c == "balances":
         cmd_balances()
+    elif c == "history":
+        cmd_history()
     elif c == "me":
         cmd_get("/auth/me")
     else:
