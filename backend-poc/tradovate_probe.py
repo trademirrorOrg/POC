@@ -29,7 +29,6 @@ ENDPOINTS = [
     ("Account Information", "margin snapshots", "GET", "/marginSnapshot/list"),
     ("Account Risk Settings", "risk status", "GET", "/accountRiskStatus/list"),
     ("Account Risk Settings", "auto-liquidation settings", "GET", "/userAccountAutoLiq/list"),
-    ("Account Risk Settings", "position limits", "GET", "/userAccountPositionLimit/list"),
     ("Positions", "positions", "GET", "/position/list"),
     ("Positions", "fill pairs (closed trades)", "GET", "/fillPair/list"),
     ("Orders (read)", "orders", "GET", "/order/list"),
