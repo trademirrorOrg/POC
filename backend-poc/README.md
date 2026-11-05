@@ -12,3 +12,7 @@ Env vars: `TV_OAUTH_CLIENT_ID`, `TV_OAUTH_CLIENT_SECRET`, `TV_OAUTH_REDIRECT_URI
 ## Read probe (all permissions)
 
 `tradovate_probe.py pull` calls every read endpoint the OAuth app's permissions cover (user, accounts, balances, risk, positions, orders, fills, contracts, alerts, chat) plus the DEV-48 identity check; `report` prints PASS/FAIL per permission. Places no orders.
+
+## Trade export (journaling)
+
+`tradovate_export.py` writes `backend-poc/exports/<timestamp>/` with `trades.csv` (one row per closed trade: account, symbol, side, qty, entry/exit time and price, P&L in points and currency before fees, order types), `fills.csv`, `orders.csv` and the raw API responses in `raw/`. Tradovate only returns the current trading session (23:00 to 22:00 Lisbon in winter), so run it each session. The folder holds real trade data and is git-ignored.
