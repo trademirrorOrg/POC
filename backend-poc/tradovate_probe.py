@@ -5,10 +5,11 @@ Run right after `tradovate_oauth.py exchange` (a fresh token with an id_token):
 
   python3 backend-poc/tradovate_probe.py pull      # calls every read endpoint, saves the results
   python3 backend-poc/tradovate_probe.py report    # PASS/FAIL per permission + the DEV-48 userId decision
+  python3 backend-poc/tradovate_probe.py shapes    # every field: type, optional/nullable, enum values
 
 Places NO orders and changes nothing. The only live-host call is GET /auth/me (DEV-48 option C check).
-Saved and printed: HTTP status, item count, field NAMES and oldest/newest timestamps. Never values,
-tokens, emails or names. Results file: ~/.cache/copytrader/probe_results.json
+Saved and printed: HTTP status, item count, field names/types/null-ness, oldest/newest timestamps and
+the values of short enum-like fields (statuses, types, sides). Never ids, amounts, tokens, emails or names. Results file: ~/.cache/copytrader/probe_results.json
 """
 import json, sys, time
 from pathlib import Path
@@ -24,7 +25,7 @@ ENDPOINTS = [
     ("Your User Information", "user list", "GET", "/user/list"),
     ("Account Information", "accounts", "GET", "/account/list"),
     ("Account Information", "cash balances", "GET", "/cashBalance/list"),
-    ("Account Information", "balance snapshot (1st account)", "SNAPSHOT", "/cashBalance/getcashbalancesnapshot"),
+    ("Account Information", "balance snapshots", "SNAPSHOT", "/cashBalance/getcashbalancesnapshot"),
     ("Account Information", "margin snapshots", "GET", "/marginSnapshot/list"),
     ("Account Risk Settings", "risk status", "GET", "/accountRiskStatus/list"),
     ("Account Risk Settings", "auto-liquidation settings", "GET", "/userAccountAutoLiq/list"),
@@ -42,6 +43,53 @@ ENDPOINTS = [
     ("Chat", "chats", "GET", "/chat/list"),
 ]
 TIME_FIELDS = ("timestamp", "fillTime", "tradeDate", "timeStamp")
+# Never record values of these, even if they look like enums.
+NO_VALUES = {"name", "email", "nickname", "firstName", "lastName", "description", "text", "userName", "title"}
+MAX_ACCOUNTS = 10
+
+
+def jtype(v):
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, int):
+        return "int"
+    if isinstance(v, float):
+        return "float"
+    if isinstance(v, str):
+        return "string"
+    return "array" if isinstance(v, list) else "object"
+
+
+def shape(rows):
+    """Per field: types seen, how many rows have it, null count, and enum-like values.
+    Values are kept only for short, digit-free strings with few distinct values (statuses,
+    types, sides), never for names, ids, amounts or timestamps."""
+    rows = [r for r in rows if isinstance(r, dict)]
+    fields = {}
+
+    def visit(prefix, obj):
+        for k, v in obj.items():
+            key = f"{prefix}{k}"
+            f = fields.setdefault(key, {"types": set(), "present": 0, "nulls": 0, "values": set(), "leaf": k})
+            f["present"] += 1
+            f["types"].add(jtype(v))
+            if v is None:
+                f["nulls"] += 1
+            elif isinstance(v, dict) and prefix.count(".") < 2:
+                visit(key + ".", v)
+            elif isinstance(v, str) and len(v) <= 24 and not any(ch.isdigit() for ch in v):
+                f["values"].add(v)
+
+    for r in rows:
+        visit("", r)
+    out = {}
+    for key, f in sorted(fields.items()):
+        enum = (sorted(f["values"]) if f["values"] and len(f["values"]) <= 12 and f["leaf"] not in NO_VALUES and "name" not in f["leaf"].lower()
+                and f["types"] <= {"string", "null"} else None)
+        out[key] = {"types": sorted(f["types"]), "present": f["present"], "nulls": f["nulls"], "enum": enum}
+    return {"rows": len(rows), "fields": out}
 
 
 def summarize(status, body):
@@ -52,6 +100,7 @@ def summarize(status, body):
     rows = body if isinstance(body, list) else [body] if isinstance(body, dict) else []
     out["count"] = len(rows) if isinstance(body, list) else None
     out["fields"] = sorted(rows[0]) if rows and isinstance(rows[0], dict) else []
+    out["shape"] = shape(rows)
     times = sorted(str(r[f]) for r in rows if isinstance(r, dict) for f in TIME_FIELDS if r.get(f))
     if times:
         out["oldest"], out["newest"] = times[0], times[-1]
@@ -66,18 +115,20 @@ def cmd_pull():
     h = {"Authorization": f"Bearer {tok['access_token']}"}
     results = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "endpoints": [], "identity": {}}
 
-    first_account = None
+    account_ids = []
     for perm, label, method, path in ENDPOINTS:
         if method == "SNAPSHOT":
-            if first_account is None:
+            if not account_ids:
                 res = {"status": None, "error": "skipped: no account to query"}
-            else:
-                res = summarize(*http(API + path, data={"accountId": first_account}, headers=h))
+            else:  # one snapshot per account (up to MAX_ACCOUNTS), shapes merged
+                snaps = [http(API + path, data={"accountId": a}, headers=h) for a in account_ids[:MAX_ACCOUNTS]]
+                bad = [st for st, _ in snaps if st != 200]
+                res = summarize(bad[0] if bad else 200, snaps[0][1] if bad else [b for _, b in snaps])
         else:
             status, body = http(API + path, headers=h)
             res = summarize(status, body)
-            if path == "/account/list" and status == 200 and isinstance(body, list) and body:
-                first_account = body[0].get("id")
+            if path == "/account/list" and status == 200 and isinstance(body, list):
+                account_ids = [a.get("id") for a in body if isinstance(a, dict) and a.get("id") is not None]
         res.update(permission=perm, label=label, path=path)
         results["endpoints"].append(res)
         extra = (f"{res['count']} item(s)" if res.get("count") is not None else "1 object") if res["status"] == 200 else res.get("error", "")
@@ -138,8 +189,30 @@ def cmd_report():
     print("Notes: 0 items is fine (empty demo account). 401/403 = permission missing. 404 = endpoint name wrong.")
 
 
+def cmd_shapes():
+    """Markdown of every field per endpoint: type, optional/nullable, enum values. Safe to share."""
+    if not RESULTS.exists():
+        sys.exit("nothing pulled yet; run `pull` first")
+    r = json.loads(RESULTS.read_text())
+    print(f"# Tradovate DEMO payload shapes ({r['at']})\n")
+    print("Field: types; `optional` = missing on some rows; `nullable` = null seen; values = enum-like only.\n")
+    for e in r["endpoints"]:
+        sh = e.get("shape") or {}
+        if e["status"] != 200 or not sh.get("rows"):
+            print(f"## {e['label']} `{e['path']}`: " + ("no rows\n" if e["status"] == 200 else f"HTTP {e['status']}\n"))
+            continue
+        print(f"## {e['label']} `{e['path']}` ({sh['rows']} row(s))\n")
+        for key, f in sh["fields"].items():
+            flags = [x for x, on in (("optional", f["present"] < sh["rows"] and "." not in key),
+                                     ("nullable", f["nulls"] > 0)) if on]
+            vals = f" values: {', '.join(f['enum'])}" if f["enum"] else ""
+            print(f"- `{key}`: {'|'.join(t for t in f['types'] if t != 'null') or 'null'}"
+                  f"{' (' + ', '.join(flags) + ')' if flags else ''}{vals}")
+        print()
+
+
 def main():
-    cmds = {"pull": cmd_pull, "report": cmd_report}
+    cmds = {"pull": cmd_pull, "report": cmd_report, "shapes": cmd_shapes}
     if len(sys.argv) != 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)
     cmds[sys.argv[1]]()
