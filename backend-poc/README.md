@@ -3,7 +3,7 @@
 Tradovate DEMO OAuth (authorization code + PKCE) helper, moved here from the Copytrader repo.
 Read-only: places no orders. See the docstring in `tradovate_oauth.py` for usage.
 
-Env vars: `TV_OAUTH_CLIENT_ID`, `TV_OAUTH_CLIENT_SECRET`, `TV_OAUTH_REDIRECT_URI`.
+The first run asks for the OAuth client ID, secret and redirect URI and saves them in `~/.config/copytrader/tradovate_oauth.json` (mode 600, outside the repo), so later runs, branch switches and new clones don't ask again. Env vars `TV_OAUTH_CLIENT_ID`, `TV_OAUTH_CLIENT_SECRET`, `TV_OAUTH_REDIRECT_URI` still override it; `tradovate_oauth.py forget` deletes it.
 
 ## DEV-48: stable userId check
 

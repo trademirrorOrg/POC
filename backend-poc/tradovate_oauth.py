@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Tradovate DEMO OAuth test helper (authorization code + PKCE). Read-only: places no orders.
 
-Env vars: TV_OAUTH_CLIENT_ID, TV_OAUTH_CLIENT_SECRET, TV_OAUTH_REDIRECT_URI
+Client ID, secret and redirect URI are asked for once and saved in
+~/.config/copytrader/tradovate_oauth.json (mode 600). Env vars TV_OAUTH_CLIENT_ID,
+TV_OAUTH_CLIENT_SECRET, TV_OAUTH_REDIRECT_URI override the saved values.
 
   python3 backend-poc/tradovate_oauth.py authorize          # prints the approval link
   python3 backend-poc/tradovate_oauth.py exchange           # then paste the full redirected URL when asked
@@ -9,12 +11,13 @@ Env vars: TV_OAUTH_CLIENT_ID, TV_OAUTH_CLIENT_SECRET, TV_OAUTH_REDIRECT_URI
   python3 backend-poc/tradovate_oauth.py me                 # GET /v1/auth/me
   python3 backend-poc/tradovate_oauth.py balances           # every account: name, type, cash, net liq, P&L
   python3 backend-poc/tradovate_oauth.py refresh            # refresh_token grant
+  python3 backend-poc/tradovate_oauth.py forget             # delete the saved client ID/secret/redirect URI
   python3 backend-poc/tradovate_oauth.py history            # count + date range of fills/orders the token can read
 
 State and tokens are kept in ~/.cache/copytrader/ (mode 600), never printed.
 DEMO ONLY: the hosts below are hard-coded on purpose.
 """
-import base64, hashlib, json, os, secrets, sys, time, urllib.error, urllib.parse, urllib.request
+import base64, getpass, hashlib, json, os, secrets, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 AUTHORIZE_URL = "https://web.ninjatrader.com/oauth?env=demo"
@@ -27,10 +30,38 @@ TOKEN_FILE = CACHE / "tradovate_oauth_token.json"
 SECRET_FIELDS = {"access_token", "refresh_token", "id_token", "accessToken", "mdAccessToken"}
 
 
+CONFIG = Path.home() / ".config" / "copytrader" / "tradovate_oauth.json"
+PROMPTS = {
+    "TV_OAUTH_CLIENT_ID": "OAuth client ID",
+    "TV_OAUTH_CLIENT_SECRET": "OAuth client secret (input hidden)",
+    "TV_OAUTH_REDIRECT_URI": "Redirect URI",
+}
+
+
 def env(name):
+    """An env var wins; otherwise the value saved in CONFIG; otherwise ask once and save it.
+
+    CONFIG lives outside the repo (mode 600), so it survives branch switches and new clones.
+    """
     v = os.environ.get(name)
+    if v:
+        return v
+    saved = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+    if saved.get(name):
+        return saved[name]
+    if not sys.stdin.isatty():
+        sys.exit(f"missing {name}: set the env var or run this once in a terminal to save it")
+    ask = getpass.getpass if name == "TV_OAUTH_CLIENT_SECRET" else input
+    v = ask(f"{PROMPTS.get(name, name)}: ").strip()
     if not v:
-        sys.exit(f"missing env var {name}")
+        sys.exit(f"missing {name}")
+    saved[name] = v
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(CONFIG.parent, 0o700)
+    CONFIG.touch(mode=0o600, exist_ok=True)
+    os.chmod(CONFIG, 0o600)
+    CONFIG.write_text(json.dumps(saved))
+    print(f"saved to {CONFIG} (mode 600); `forget` deletes it")
     return v
 
 
@@ -221,6 +252,9 @@ def main():
         cmd_exchange(input("Paste the full redirected URL and press Enter: ").strip().strip("'\""))
     elif c == "refresh":
         cmd_refresh()
+    elif c == "forget":
+        CONFIG.unlink(missing_ok=True)
+        print(f"deleted {CONFIG}")
     elif c == "accounts":
         cmd_get("/account/list")
     elif c == "balances":
