@@ -16,3 +16,7 @@ Env vars: `TV_OAUTH_CLIENT_ID`, `TV_OAUTH_CLIENT_SECRET`, `TV_OAUTH_REDIRECT_URI
 ## Trade export (journaling)
 
 `tradovate_export.py` writes `backend-poc/exports/<timestamp>/` with `trades.csv` (one row per closed trade: account, symbol, side, qty, entry/exit time and price, P&L in points and currency before fees, order types), `fills.csv`, `orders.csv` and the raw API responses in `raw/`. Tradovate only returns the current trading session (23:00 to 22:00 Lisbon in winter), so run it each session. The folder holds real trade data and is git-ignored.
+
+## Token refresh with an open WebSocket (T1, T4)
+
+`tradovate_ws_token_test.py keep|reauth` opens the demo WebSocket with the saved token, refreshes it, and runs until 15 min past the old token's expiry (about 95 min after a fresh `exchange`). `keep` stays on the old token; `reauth` sends the new token on the same socket. It logs whether the socket survives, whether `account/list` over the socket still answers, whether a refresh revokes the old token over REST, and `refresh_token_expires_in` after the refresh. Needs `pip install websocket-client==1.8.0`. Places no orders and never prints tokens or account names; the log goes to `~/.cache/copytrader/`.
